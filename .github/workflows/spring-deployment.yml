@@ -1,0 +1,112 @@
+name: CI & CD for Spring
+
+# on:
+#   push:
+#     branches: [ "master" ]
+on: 
+  workflow_dispatch
+
+    
+jobs:
+  build:
+  
+   
+    runs-on: self-hosted
+
+    env:
+      IMAGE_TAG: ${{ github.sha }}        
+      ECS_SERVICE: Spring_Service_Astha                 
+      ECS_CLUSTER: GHActionCluster                 
+      ECS_TASK_DEFINITION: aws.json 
+      CONTAINER_NAME: spring_container 
+      
+    steps:
+ 
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v3
+      with:
+         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+         aws-region: us-east-1
+                  
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v1  
+      
+    - uses: actions/checkout@v3
+      with:      
+           token: ${{ secrets.GH_PAT_GA }}
+        
+    - uses: actions/setup-java@v3
+      with:
+       distribution: 'temurin'
+       java-version: '11'
+       
+    - name: Cache Maven Dependencies
+      id: maven-cache
+      uses: actions/cache@v3
+      with:
+          path: ~/.m2
+          key: Maven-Cache-self-hosted
+          restore-keys: Maven-Cache-self-hosted
+      
+    - run: |
+            cd spring-boot-ems
+            mvn clean install         
+            
+    - name: SonarQube Scan
+      uses: sonarsource/sonarqube-scan-action@master
+      env:
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
+     
+    - name: Buid and Push Docker   
+      env:
+       REGISTRY: ${{ steps.login-ecr.outputs.registry }}  
+      run:  | 
+             cd spring-boot-ems
+             docker build -t $REGISTRY/${{ secrets.REPOSITORY }}:$IMAGE_TAG .
+             docker push $REGISTRY/${{ secrets.REPOSITORY }}:$IMAGE_TAG
+             
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+          image-ref: '543816070942.dkr.ecr.us-east-1.amazonaws.com/asthagithubactions:${{ env.IMAGE_TAG }}'
+          format: template
+          template: "@/contrib/html.tpl"
+          output: trivy-report.html
+          
+    - name: Archive code coverage results
+      uses: actions/upload-artifact@v3
+      with:
+          name: github-pages
+          path: trivy-report.html
+          
+
+    - name: Fill in the new image ID in the Amazon ECS task definition
+      id: task-def
+      uses: aws-actions/amazon-ecs-render-task-definition@c804dfbdd57f713b6c079302a4c01db7017a36fc
+      with:
+          task-definition: ${{ env.ECS_TASK_DEFINITION }}
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: 543816070942.dkr.ecr.us-east-1.amazonaws.com/asthagithubactions:${{ env.IMAGE_TAG }}
+
+
+    - name: Deploy Amazon ECS task definition
+      uses: aws-actions/amazon-ecs-deploy-task-definition@df9643053eda01f169e64a0e60233aacca83799a
+      with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true     
+          
+    - name: Post to a Slack channel
+      id: slack
+      uses: slackapi/slack-github-action@v1.24.0
+      with:
+       channel-id: 'C05RSG0RGB0'
+       slack-message: "GitHub build result: ${{ job.status }}"
+      env:
+       SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}     
+            
