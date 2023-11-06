@@ -24,7 +24,14 @@
 			<artifactId>spring-boot-starter-actuator</artifactId>
 		</dependency>
 			
-		
+		<!-- https://mvnrepository.com/artifact/org.sonarsource.api.plugin/sonar-plugin-api -->
+<dependency>
+    <groupId>org.sonarsource.api.plugin</groupId>
+    <artifactId>sonar-plugin-api</artifactId>
+    <version>9.5.0.71</version>
+    <scope>provided</scope>
+</dependency>
+
 		
 		
 		<dependency>
